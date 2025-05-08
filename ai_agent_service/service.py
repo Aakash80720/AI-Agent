@@ -8,5 +8,5 @@ db = SQLDatabase.from_uri("sqlite:///test.db")
 toolkit = SQLDatabaseToolkit(db=db, llm=llm)
 agent = create_sql_agent(llm=llm, toolkit=toolkit, verbose=True)
 
-response = agent.invoke("What is the average age of employees?")
+response = agent.invoke("What is the average SALARY of employees? show only employee name and age WITH SALARY > 60000")
 print(response)
