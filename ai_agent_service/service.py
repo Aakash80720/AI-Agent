@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 from operator import itemgetter
 from langchain.prompts import ChatMessagePromptTemplate, MessagesPlaceholder, ChatPromptTemplate, FewShotPromptTemplate, FewShotChatMessagePromptTemplate
 from langchain_core.example_selectors import SemanticSimilarityExampleSelector
@@ -91,6 +92,30 @@ query = create_sql_query_chain(llm=llm, db=db, prompt=input_chat_prompt)
 
 
 response = query.invoke({"question": data, "top_k": 3})
+=======
+from math import e
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_ollama import ChatOllama
+from langchain_community.utilities.sql_database import SQLDatabase
+from langchain.agents import create_sql_agent
+
+from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
+from langchain.chains.sql_database.query import create_sql_query_chain
+
+from langchain.agents.agent_toolkits import SQLDatabaseToolkit
+llm = ChatOllama(model="llama3")
+db = SQLDatabase.from_uri("sqlite:///test.db")
+toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+agent = create_sql_agent(llm=llm, toolkit=toolkit, verbose=True)
+
+query = create_sql_query_chain(llm=llm, db=db)
+
+
+out = query.invoke({"question" : "Employee's Highest salary"})
+print(out)
+
+response = agent.invoke("Which Employee has the highest salary?")
+>>>>>>> f5ffcca (changes)
 print(response)
 response = response.strip("```sql")
 execute_query = QuerySQLDatabaseTool(db=db, description="execute SQL query")
@@ -98,6 +123,7 @@ execute_query = QuerySQLDatabaseTool(db=db, description="execute SQL query")
 output = execute_query.invoke(response)
 print(output)
 
+<<<<<<< HEAD
 answer_prompt = PromptTemplate(
     input_variables=["input"],
     template="""Given the following user question, corresponding User Question, and SQL result, answer the question with following results.
@@ -118,3 +144,11 @@ chain = (
  )
 
 print("Final Output: ", chain.invoke({"question": data}))
+=======
+execute_query = QuerySQLDatabaseTool(db=db)
+response = execute_query.invoke("Which Employee has the highest salary?")
+print(response)
+
+chain = query | execute_query 
+response = chain.invoke({"question" : "Employee's Highest salary"})
+>>>>>>> f5ffcca (changes)
