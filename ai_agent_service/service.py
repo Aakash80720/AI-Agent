@@ -1,4 +1,5 @@
 from operator import itemgetter
+from tabnanny import verbose
 from langchain.prompts import ChatMessagePromptTemplate, MessagesPlaceholder, ChatPromptTemplate, FewShotPromptTemplate, FewShotChatMessagePromptTemplate
 from langchain_core.example_selectors import SemanticSimilarityExampleSelector
 from langchain_community.embeddings import OllamaEmbeddings
@@ -13,6 +14,46 @@ import re
 from langchain.chains.sql_database.query import create_sql_query_chain
 from langchain_chroma import Chroma
 from openai import OpenAI
+import functools
+
+
+@functools.lru_cache(maxsize=1)
+def get_llm():
+    llm = ChatOllama(model="codellama")
+    return llm
+
+@functools.lru_cache(maxsize=1)
+def get_sql_database():
+    # Create a SQLite database in memory
+    db = SQLDatabase.from_uri("sqlite:///test.db")
+    return db
+
+
+def get_or_create_vectorstore(vectorstore_cls, collection_name="default"):
+    """Get or create a persistent vectorstore collection for caching."""
+    return vectorstore_cls(collection_name=collection_name)
+
+@functools.lru_cache(maxsize=1)
+def get_example_selector_cached(examples_tuple, embeddings_model_name, vectorstore_cls, k):
+    """Cache the example selector to avoid recomputation."""
+    # Convert tuple back to list of dicts
+    examples = [dict(zip(("input", "query"), ex)) for ex in examples_tuple]
+    embeddings = OllamaEmbeddings(model=embeddings_model_name)
+    vectorstore = get_or_create_vectorstore(vectorstore_cls)
+    return SemanticSimilarityExampleSelector.from_examples(
+        examples=examples,
+        embeddings=embeddings,
+        vectorstore_cls=vectorstore_cls,
+        k=k
+    )
+
+def create_few_shot_prompt(example_selector, sample_prompt):
+    return FewShotChatMessagePromptTemplate(
+        example_prompt=sample_prompt,
+        example_selector=example_selector,
+        output_parser=StrOutputParser(),
+    )
+
 
 input_chat_prompt = PromptTemplate(
     input_variables=["table_info", "input", "top_k"],
@@ -40,11 +81,11 @@ input_chat_prompt = PromptTemplate(
 data = input("Enter your question: ")
 
 
-# Initialize the database connection
-llm = ChatOllama(model="codellama")
+# Initialize the LLM
+llm = get_llm()
 
 
-db = SQLDatabase.from_uri("sqlite:///test.db")
+db = get_sql_database()
 
 
 query = create_sql_query_chain(llm=llm, db=db, prompt=input_chat_prompt)
@@ -185,12 +226,17 @@ sample_prompt = ChatPromptTemplate.from_messages([
     ("ai", "{query}")
 ])
 
-example_selector = SemanticSimilarityExampleSelector.from_examples(
-    examples=example,
-    embeddings=OllamaEmbeddings(model="llama3"),
-    vectorstore_cls=Chroma,
-    k=3
-)
+try:
+    example_selector = SemanticSimilarityExampleSelector.from_examples(
+        examples=example,
+        embeddings=OllamaEmbeddings(model="llama3"),
+        vectorstore_cls=Chroma
+    )
+except Exception as e:
+    print("Error initializing SemanticSimilarityExampleSelector:", e)
+    import traceback
+    traceback.print_exc()
+    exit(1)
 
 
 few_shot_prompt = FewShotChatMessagePromptTemplate(
@@ -207,7 +253,7 @@ final_prompt = ChatPromptTemplate.from_messages(
          ("system", "You are a MySQL expert. Given an input question, "
          "create a syntactically correct MySQL query to run. Unless otherwise specificed.\n\n"
          "Here is the relevant table info: {table_info}\n\n"
-         "Below are a number of examples of questions and their corresponding SQL queries."),
+         "Below are a number of examples of questions and their corresponding SQL queries. use the top {top_k} most relevant examples as reference to answer the question.\n\n"),
          few_shot_prompt,
          ("human", "{input}"),
      ]
@@ -226,5 +272,4 @@ chain = (
  | rephrase_answer
  )
 
-query = input("Enter your question: ")
-print("Final Output: ", chain.invoke({"question": query}))
+print("Final Output: ", chain.invoke({"question": data}))
