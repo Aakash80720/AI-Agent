@@ -1,5 +1,4 @@
 from operator import itemgetter
-from tabnanny import verbose
 from langchain.prompts import ChatMessagePromptTemplate, MessagesPlaceholder, ChatPromptTemplate, FewShotPromptTemplate, FewShotChatMessagePromptTemplate
 from langchain_core.example_selectors import SemanticSimilarityExampleSelector
 from langchain_community.embeddings import OllamaEmbeddings
