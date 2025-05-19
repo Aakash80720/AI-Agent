@@ -41,7 +41,7 @@ data = input("Enter your question: ")
 
 
 # Initialize the database connection
-llm = ChatOllama(model="codellama")
+llm = ChatOllama(model="deepseek-coder:33b")
 
 
 db = SQLDatabase.from_uri("sqlite:///test.db")
@@ -207,6 +207,7 @@ final_prompt = ChatPromptTemplate.from_messages(
          ("system", "You are a MySQL expert. Given an input question, "
          "create a syntactically correct MySQL query to run. Unless otherwise specificed.\n\n"
          "Here is the relevant table info: {table_info}\n\n"
+         "Top {top_k} most relevant .\n\n"
          "Below are a number of examples of questions and their corresponding SQL queries."),
          few_shot_prompt,
          ("human", "{input}"),
