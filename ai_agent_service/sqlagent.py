@@ -1,20 +1,24 @@
 import functools
 from datetime import datetime
+import json
+from re import S
+from urllib import response
 from venv import create
 
 from langchain_ollama import ChatOllama
 from langchain.chains.sql_database.query import create_sql_query_chain
 from langchain_community.utilities.sql_database import SQLDatabase
 from langchain.prompts import PromptTemplate, ChatPromptTemplate
-from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.output_parsers import StrOutputParser
 
 from langchain_core.messages.tool import ToolCall
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, tool
+from sympy import O
+from yarl import Query
 
 
 SYSTEM_PROMPT = f"""
-You are Querymancer, a master database engineer with exceptional expertise in SQLite query construction and optimization.
 Your purpose is to transform natural language requests into precise, efficient SQL queries that deliver exactly what the user needs.
 
 <instructions>
@@ -36,65 +40,27 @@ Your target audience is business analysts and data scientists who may not be fam
 
 @functools.lru_cache(maxsize=1)
 def get_llm():
-    llm = ChatOllama(model="codellama", temperature=0.7, num_ctx=2048, verbose=False, keep_alive=1)
+    llm = ChatOllama(model="deepseek-coder:33b", temperature=0.7, num_ctx=2048, verbose=False, keep_alive=1)
     return llm
 
 @functools.lru_cache(maxsize=1)
 def get_sql_database():
-    # Create a SQLite database in memory
     db = SQLDatabase.from_uri("sqlite:///test.db")
     return db
-
 
 llm = get_llm()
 db = get_sql_database()
 
-prompt = PromptTemplate.from_template(
-    template=(
-        """
-You are an intelligent SQL agent. Analyze the user input and extract:
-- operation: one of [INSERT, READ, UPDATE, DELETE]
-- table: name of the target table (e.g., USER)
-- fields: key-value dictionary of column names and their provided values
 
-Return result in JSON format only.
-
-User Input: {user_input}
-"""
-    )
-)
-
-full_prompt = ChatPromptTemplate.from_messages([
-    ("system", SYSTEM_PROMPT),
-    ("human", 
-        """Analyze the user input and extract:
-- operation: one of [INSERT, READ, UPDATE, DELETE]
-- table: name of the target table (e.g., USER)
-- fields: key-value dictionary of column names and their provided values
-
-Return result in JSON format only.
-
-User Input: {user_input}
-""")
-])
-
-prompt_chain = full_prompt | llm | JsonOutputParser()
-
-def get_available_tools():
-
-    tools = [
-       list_tables,
-    ]
 
 def calling_tool(call: ToolCall):
-    # Call the tool with the provided arguments
     
     result = []
     return result
 
 
 @tool(parse_docstring=True)
-def list_tables() -> str:
+def list_tables(reasoning : str) -> str:
     """Lists all user-created tables in the database (excludes SQLite system tables).
 
     Args:
@@ -109,26 +75,49 @@ def list_tables() -> str:
         return str(tables)
     except Exception as e:
         return f"Error listing tables: {str(e)}"
-    
+
+@tool(parse_docstring=True)
+def execute_query(query: str, reasoning: str) -> str:
+    """Executes a SQL query on the database.
+
+    Args:
+        query: The SQL query to execute
+        reasoning: Detailed explanation of why you need to execute this query
+
+    Returns:
+        Result of the executed query
+    """
+    try:
+        db = get_sql_database()
+        result = db.execute(query)
+        return str(result)
+    except Exception as e:
+        return f"Error executing query: {str(e)}"
 
 DB_structure_prompt = PromptTemplate.from_template(
     template=(
-        """
-        You has access to a SQLite database. This was database's Table structure:
-        {table_info}
-        Your task is to write only the SQL query to answer the following question.
-        Your job is to create a syntactically correct SQL query to run.
-        Your main task to perform the CRUD operations on the database.
-        {top_k} most relevant tables are shown above.
-    """
+        f"System : {SYSTEM_PROMPT}"
+        "You has access to a SQLite database. This was database's Table structure:"
+        "{table_info}"
+        "Your task is to write only the SQL query to answer the following question."
+        "Your job is to create a syntactically correct SQL query to run."
+        "Your main task to perform the CRUD operations on the database."
+        "{top_k} most relevant tables are shown above."
+        "Question: {input}"
+        "SQL Query:"
     )
 )
+
+
 
 generated_query = create_sql_query_chain(
     llm=llm,
     db=db,
-    prompt= DB_structure_prompt,
+    prompt= DB_structure_prompt
 )
 
-
-
+query = generated_query.invoke({"question": "What is the average salary of employees?"})
+print(query)
+result = db._execute(query)
+json_response = json.dumps(result, indent=2)
+print(json_response)
