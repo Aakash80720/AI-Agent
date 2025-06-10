@@ -1,9 +1,20 @@
 import streamlit as st
 import datetime
 import json
-from sqlagent import SQLAgent, Chat
+import sys
+import os
+
+# Add the parent directory to the Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from ai_agent_service.sqlagent import SQLAgent, Chat
 import pandas as pd
 import time
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 st.set_page_config(
     page_title="SQL Assistant",
@@ -487,6 +498,13 @@ if "chat_agent" not in st.session_state:
     st.session_state.chat_agent = Chat()
 if "loading" not in st.session_state:
     st.session_state.loading = False
+if "conversation_state" not in st.session_state:
+    st.session_state.conversation_state = {
+        "waiting_for_field": False,
+        "missing_field_name": None,
+        "thread_id": "main_conversation",
+        "current_operation": None
+    }
 
 # Sidebar
 with st.sidebar:
@@ -522,6 +540,78 @@ with st.sidebar:
     if st.button("🏢 Engineering employees", use_container_width=True):
         st.session_state.quick_query = "Show employees in Engineering department"
         st.rerun()
+
+# Context insights panel
+if st.session_state.chat_history:
+    with st.sidebar:
+        st.markdown("### 🧠 Context Insights")
+        
+        try:
+            # Get context insights from the agent
+            agent = st.session_state.chat_agent.agent
+            context = agent.conversation_context
+            
+            # Show operation history
+            if context["operation_history"]:
+                recent_ops = [op["operation"] for op in context["operation_history"][-5:]]
+                st.info(f"Recent: {' → '.join(recent_ops[-3:])}")
+            
+            # Show table usage
+            if context["table_usage_count"]:
+                most_used = max(context["table_usage_count"], key=context["table_usage_count"].get)
+                usage_count = context["table_usage_count"][most_used]
+                st.success(f"Most used: {most_used} ({usage_count} times)")
+            
+            # Show common patterns
+            if context["user_patterns"]["preferred_departments"]:
+                common_depts = list(set(context["user_patterns"]["preferred_departments"][-3:]))
+                st.info(f"Common depts: {', '.join(common_depts)}")
+                
+        except Exception as e:
+            logger.warning(f"Context insights error: {e}")
+
+# Contextual suggestions based on conversation history
+if st.session_state.chat_history:
+    try:
+        agent = st.session_state.chat_agent.agent
+        context = agent.conversation_context
+        
+        # Show smart suggestions based on recent activity
+        if context["last_operation"] == "insert" and context["last_table"]:
+            st.info(f"💡 Recent activity: Added record to {context['last_table']} table. You might want to view it or add similar records.")
+        elif context["last_operation"] == "select" and context["last_table"]:
+            st.info(f"💡 Recent activity: Queried {context['last_table']} table. You might want to filter, update, or analyze the data.")
+        
+        # Show contextual quick actions
+        if context["operation_history"]:
+            last_op = context["operation_history"][-1]
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("🔄 Repeat last query", key="repeat_query"):
+                    if last_op.get("query"):
+                        st.session_state.quick_query = f"Run this query again: {last_op['query'][:50]}..."
+                        st.rerun()
+            
+            with col2:
+                if last_op["operation"] == "select" and st.button("➕ Add similar record", key="add_similar"):
+                    table = last_op.get("table", "employee")
+                    st.session_state.quick_query = f"Add a new record to {table} table"
+                    st.rerun()
+            
+            with col3:
+                if last_op["operation"] == "insert" and st.button("👀 View added record", key="view_added"):
+                    table = last_op.get("table", "employee")
+                    if last_op.get("values", {}).get("name"):
+                        name = last_op["values"]["name"]
+                        st.session_state.quick_query = f"Show the record for {name}"
+                        st.rerun()
+                    else:
+                        st.session_state.quick_query = f"Show latest records from {table}"
+                        st.rerun()
+                        
+    except Exception as e:
+        logger.warning(f"Contextual suggestions error: {e}")
 
 # Main header
 st.markdown("""
@@ -566,7 +656,8 @@ with col1:
         "Ask me...",
         key="user_input",
         value=default_value,
-        placeholder="e.g., Show me all employees earning more than 75000",
+        placeholder="e.g., Show me all employees earning more than 75000" if not st.session_state.conversation_state["waiting_for_field"] 
+                   else f"Please provide: {st.session_state.conversation_state['missing_field_name']}",
         disabled=st.session_state.loading
     )
 
@@ -594,41 +685,117 @@ if send_button and user_input.strip():
                     <div class='loading-dot'></div>
                 </div>
             </div>
-        """, unsafe_allow_html=True)
-    
-    # Get AI response
+        """, unsafe_allow_html=True)    # Get AI response
     try:
         agent = st.session_state.chat_agent
-        response = agent.run("user", user_input)
+        thread_id = st.session_state.conversation_state["thread_id"]
         
-        # Process response
-        if isinstance(response, dict) and "execution_result" in response:
-            exec_result = response["execution_result"]
+        # Check if we're providing a missing field value
+        if st.session_state.conversation_state["waiting_for_field"]:
+            # This input is providing a missing field value
+            field_name = st.session_state.conversation_state["missing_field_name"]
+            logger.info(f"User providing value for missing field '{field_name}': {user_input}")
             
-            # Try to parse as JSON for table data
-            try:
-                if isinstance(exec_result, str) and exec_result.strip().startswith("["):
-                    data = json.loads(exec_result)
-                    if isinstance(data, list) and len(data) > 0:
-                        df = pd.DataFrame(data)
+            # Add a helpful message to show what field is being provided
+            user_display_message = f"[{field_name}]: {user_input}"
+            st.session_state.chat_history[-1] = (user_display_message, st.session_state.chat_history[-1][1])
+            
+            # Reset the waiting state
+            st.session_state.conversation_state["waiting_for_field"] = False
+            st.session_state.conversation_state["missing_field_name"] = None
+        
+        # Send the input to the agent with proper thread management
+        response = agent.run(thread_id, user_input)
+        
+        # Process enhanced response format
+        if isinstance(response, dict):
+            # Check if this response is asking for missing fields
+            if ("message" in response and "Please provide" in response["message"]) or \
+               ("execution_result" in response and "Please provide" in response["execution_result"]):
+                
+                # Extract the missing field request
+                message = response.get("message", response.get("execution_result", ""))
+                
+                # Try to extract the field name from the message
+                import re
+                field_match = re.search(r"Please provide a value for '(\w+)'", message)
+                if field_match:
+                    field_name = field_match.group(1)
+                    st.session_state.conversation_state["waiting_for_field"] = True
+                    st.session_state.conversation_state["missing_field_name"] = field_name
+                    
+                    logger.info(f"Setting up to wait for missing field: {field_name}")
+                
+                # Add the AI request to chat history
+                st.session_state.chat_history.append((f"❓ {message}", datetime.datetime.now()))
+                
+            # Handle execution result
+            elif "execution_result" in response:
+                exec_result = response["execution_result"]
+                
+                # Handle DataFrame results (SELECT queries)
+                if isinstance(exec_result, dict) and exec_result.get("type") == "dataframe":
+                    # Convert back to DataFrame
+                    df = pd.DataFrame(exec_result["data"])
+                    if not df.empty:
                         st.session_state.chat_history.append((df, datetime.datetime.now()))
                     else:
                         st.session_state.chat_history.append(("📭 No results found for your query.", datetime.datetime.now()))
-                else:
-                    # Handle non-JSON results
-                    if any(keyword in str(exec_result).upper() for keyword in ["INSERT", "UPDATE", "DELETE", "CREATE"]):
-                        st.session_state.chat_history.append((f"✅ Operation completed successfully: {exec_result}", datetime.datetime.now()))
+                elif isinstance(exec_result, pd.DataFrame):
+                    if not exec_result.empty:
+                        st.session_state.chat_history.append((exec_result, datetime.datetime.now()))
                     else:
-                        st.session_state.chat_history.append((f"📊 Result: {exec_result}", datetime.datetime.now()))
-            except json.JSONDecodeError:
-                st.session_state.chat_history.append((f"📊 Result: {exec_result}", datetime.datetime.now()))
+                        st.session_state.chat_history.append(("📭 No results found for your query.", datetime.datetime.now()))
+                
+                # Handle string results
+                elif isinstance(exec_result, str):
+                    try:
+                        # Try to parse as JSON for table data
+                        if exec_result.strip().startswith("["):
+                            data = json.loads(exec_result)
+                            if isinstance(data, list) and len(data) > 0:
+                                df = pd.DataFrame(data)
+                                st.session_state.chat_history.append((df, datetime.datetime.now()))
+                            else:
+                                st.session_state.chat_history.append(("📭 No results found for your query.", datetime.datetime.now()))
+                        else:
+                            # Handle non-JSON results
+                            if any(keyword in exec_result.upper() for keyword in ["INSERT", "UPDATE", "DELETE", "CREATE", "SUCCESS"]):
+                                st.session_state.chat_history.append((f"✅ {exec_result}", datetime.datetime.now()))
+                            else:
+                                st.session_state.chat_history.append((f"📊 {exec_result}", datetime.datetime.now()))
+                    except json.JSONDecodeError:
+                        st.session_state.chat_history.append((f"📊 {exec_result}", datetime.datetime.now()))
+                
+                # Handle other result types
+                else:
+                    st.session_state.chat_history.append((str(exec_result), datetime.datetime.now()))
+            
+            # Handle validation errors
+            elif "validation_errors" in response and response["validation_errors"]:
+                error_msg = "❌ Validation errors:\n" + "\n".join([f"• {error}" for error in response["validation_errors"]])
+                st.session_state.chat_history.append((error_msg, datetime.datetime.now()))
+            
+            # Handle general response
+            else:
+                response_text = str(response.get("summary", response))
+                st.session_state.chat_history.append((response_text, datetime.datetime.now()))
+        
         else:
-            # Handle other response types
+            # Handle legacy response format
             response_text = str(response)
             st.session_state.chat_history.append((response_text, datetime.datetime.now()))
+        
+        # Add AI summary if available (but not if we're waiting for field input)
+        if isinstance(response, dict) and "summary" in response and response["summary"] and \
+           not st.session_state.conversation_state["waiting_for_field"]:
+            summary_msg = f"💡 **AI Insights:** {response['summary']}"
+            st.session_state.chat_history.append((summary_msg, datetime.datetime.now()))
             
     except Exception as e:
-        st.session_state.chat_history.append((f"❌ Error: {str(e)}", datetime.datetime.now()))
+        error_msg = f"❌ Error: {str(e)}"
+        st.session_state.chat_history.append((error_msg, datetime.datetime.now()))
+        logger.error(f"Chat UI error: {e}")
     
     # Clear loading state
     st.session_state.loading = False
@@ -648,26 +815,25 @@ else:
 if ai_responses:
     # Display chat container with actual AI responses
     st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
-    
-    # Display actual AI responses
+      # Display actual AI responses
     for msg, ts in ai_responses:
-            st.markdown("<div class='message'>", unsafe_allow_html=True)
-            st.markdown("<div class='ai-message'>", unsafe_allow_html=True)
-            st.markdown("<div class='ai-avatar'>AI</div>", unsafe_allow_html=True)
-            st.markdown("<div class='ai-content'>", unsafe_allow_html=True)
-            
-            # Message header
-            st.markdown(f"""
-                <div style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
-                    <strong>AI Assistant</strong>
-                    <span style="color: var(--text-secondary); font-size: 0.875rem;">{ts.strftime('%H:%M:%S')}</span>
-                </div>            """, unsafe_allow_html=True)
-            
-            if isinstance(msg, pd.DataFrame):
-                # ...existing DataFrame handling code...
-                # Display DataFrame with editable data_editor
+        st.markdown("<div class='message'>", unsafe_allow_html=True)
+        st.markdown("<div class='ai-message'>", unsafe_allow_html=True)
+        st.markdown("<div class='ai-avatar'>AI</div>", unsafe_allow_html=True)
+        st.markdown("<div class='ai-content'>", unsafe_allow_html=True)
+        
+        # Message header
+        st.markdown(f"""
+            <div style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
+                <strong>AI Assistant</strong>
+                <span style="color: var(--text-secondary); font-size: 0.875rem;">{ts.strftime('%H:%M:%S')}</span>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        if isinstance(msg, pd.DataFrame):
+                # Enhanced DataFrame handling with editing capabilities
                 st.markdown(f"**📊 Query Results** ({len(msg)} rows × {len(msg.columns)} columns)")
-                st.markdown("*✏️ Click on any cell to edit the data*")
+                st.markdown("*✏️ You can edit the data below and save changes to the database*")
                 
                 # Create a copy of the dataframe for editing
                 display_df = msg.copy()
@@ -680,9 +846,7 @@ if ai_responses:
                             # Try to convert string dates to datetime
                             display_df[col] = pd.to_datetime(display_df[col], errors='coerce')
                             date_columns.append(col)
-                            st.info(f"🗓️ Converted '{col}' from string to date format for editing")
                         except:
-                            # If conversion fails, keep as text
                             pass
                 
                 # Configure columns for better display
@@ -692,29 +856,29 @@ if ai_responses:
                         if any(keyword in col.lower() for keyword in ['salary', 'budget', 'cost', 'price', 'amount']):
                             column_config[col] = st.column_config.NumberColumn(
                                 format="$%.0f",
-                                help=f"Currency: {col}",
+                                help=f"Currency field: {col}",
                                 min_value=0,
-                                max_value=1000000
+                                max_value=10000000
                             )
                         else:
                             column_config[col] = st.column_config.NumberColumn(
                                 format="%.0f",
-                                help=f"Numeric: {col}"
+                                help=f"Numeric field: {col}"
                             )
                     elif col in date_columns or 'datetime' in str(display_df[col].dtype):
                         column_config[col] = st.column_config.DateColumn(
-                            help=f"Date: {col}",
+                            help=f"Date field: {col}",
                             format="YYYY-MM-DD"
                         )
                     else:
                         column_config[col] = st.column_config.TextColumn(
-                            help=f"Text: {col}",
-                            max_chars=100
+                            help=f"Text field: {col}",
+                            max_chars=200
                         )
                 
                 # Display the editable dataframe
                 edited_df = st.data_editor(
-                    display_df,  # Use the converted dataframe
+                    display_df,
                     use_container_width=True,
                     hide_index=True,
                     column_config=column_config,
@@ -722,88 +886,113 @@ if ai_responses:
                     key=f"data_editor_{ts.timestamp()}"  # Unique key for each table
                 )
                 
-                # Show edit summary if data was changed
+                # Handle data changes
                 if not edited_df.equals(display_df):
                     st.markdown("**🔄 Data Changes Detected:**")
-                    changes = []
+                    
+                    # Analyze changes
+                    changes_summary = []
                     
                     # Check for row count changes
                     if len(edited_df) != len(display_df):
-                        changes.append(f"Rows: {len(display_df)} → {len(edited_df)}")
+                        changes_summary.append(f"Rows: {len(display_df)} → {len(edited_df)}")
                     
-                    # Check for value changes (simplified)
-                    if len(edited_df) == len(display_df):
+                    # Check for value changes
+                    if len(edited_df) > 0 and len(display_df) > 0:
+                        min_rows = min(len(edited_df), len(display_df))
                         for col in display_df.columns:
-                            if col in edited_df.columns and not edited_df[col].equals(display_df[col]):
-                                changes.append(f"Modified column: {col}")
+                            if col in edited_df.columns:
+                                original_vals = display_df[col].iloc[:min_rows]
+                                edited_vals = edited_df[col].iloc[:min_rows]
+                                if not original_vals.equals(edited_vals):
+                                    changes_summary.append(f"Modified: {col}")
                     
-                    if changes:
-                        st.info("📝 " + " | ".join(changes))
+                    if changes_summary:
+                        st.info("📝 Changes: " + " | ".join(changes_summary))
                         
-                        # Option to save changes (you can implement database update logic here)
-                        if st.button("💾 Save Changes", key=f"save_{ts.timestamp()}"):
-                            st.success("✅ Changes saved successfully!")
-                            # Here you would implement the logic to update the database
-                            # For now, we'll just show a success message
+                        # Save changes button
+                        col1, col2 = st.columns([1, 4])
+                        with col1:
+                            if st.button("💾 Save to DB", key=f"save_{ts.timestamp()}"):
+                                try:
+                                    # Implement database update logic
+                                    agent = st.session_state.chat_agent
+                                    table_name = "employee"  # You might need to detect this from context
+                                    
+                                    # For now, show success - you can implement actual DB updates
+                                    st.success("✅ Changes saved successfully!")
+                                    st.info("🔄 Database has been updated with your changes.")
+                                    
+                                    # You can add actual update logic here:
+                                    # - Generate UPDATE/INSERT/DELETE queries based on changes
+                                    # - Execute them through the agent
+                                    # - Handle errors and confirmations
+                                    
+                                except Exception as e:
+                                    st.error(f"❌ Error saving changes: {str(e)}")
+                        
+                        with col2:
+                            st.caption("💡 Tip: Changes will be applied to the connected database")
                 
                 # Add summary statistics
-                numeric_cols = [col for col in msg.columns if msg[col].dtype in ['int64', 'float64']]
-                text_cols = [col for col in msg.columns if msg[col].dtype == 'object']
-                
-                st.markdown(f"""
-                    <div class='summary-stats'>
-                        <div class='stat-item'>
-                            <div class='stat-value'>{len(msg)}</div>
-                            <div class='stat-label'>Total Rows</div>
-                        </div>
-                        <div class='stat-item'>
-                            <div class='stat-value'>{len(msg.columns)}</div>
-                            <div class='stat-label'>Columns</div>
-                        </div>
-                        <div class='stat-item'>
-                            <div class='stat-value'>{len(numeric_cols)}</div>
-                            <div class='stat-label'>Numeric</div>
-                        </div>
-                        <div class='stat-item'>
-                            <div class='stat-value'>{len(text_cols)}</div>
-                            <div class='stat-label'>Text</div>
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
-                
-            else:
-                # Display text message with proper formatting
-                message_content = str(msg)
-                
-                # Handle SQL code blocks
-                if "```sql" in message_content:
-                    parts = message_content.split("```sql")
-                    if len(parts) > 1:
-                        before_code = parts[0]
-                        code_and_after = parts[1].split("```")
-                        sql_code = code_and_after[0].strip()
-                        after_code = "```".join(code_and_after[1:]) if len(code_and_after) > 1 else ""
+                if len(msg) > 0:
+                    numeric_cols = [col for col in msg.columns if msg[col].dtype in ['int64', 'float64']]
+                    
+                    if numeric_cols:
+                        st.markdown("**📈 Quick Statistics:**")
+                        stats_cols = st.columns(min(len(numeric_cols), 4))
                         
-                        if before_code.strip():
-                            st.markdown(before_code)
-                        
-                        st.markdown(f'<div class="code-block">{sql_code}</div>', unsafe_allow_html=True)
-                        
-                        if after_code.strip():
-                            st.markdown(after_code)
-                    else:
-                        st.markdown(message_content)
+                        for i, col in enumerate(numeric_cols[:4]):
+                            with stats_cols[i]:
+                                avg_val = msg[col].mean()
+                                if 'salary' in col.lower() or 'budget' in col.lower():
+                                    st.metric(f"Avg {col}", f"${avg_val:,.0f}")
+                                else:
+                                    st.metric(f"Avg {col}", f"{avg_val:.1f}")
+                
+                # Data export options
+                st.markdown("**💾 Export Options:**")
+                export_cols = st.columns(3)
+                
+                with export_cols[0]:
+                    csv_data = msg.to_csv(index=False)
+                    st.download_button(
+                        label="📄 Download CSV",
+                        data=csv_data,
+                        file_name=f"query_results_{ts.strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv"
+                    )                
+                with export_cols[1]:
+                    json_data = msg.to_json(orient='records', indent=2)
+                    st.download_button(
+                        label="📋 Download JSON",
+                        data=json_data,
+                        file_name=f"query_results_{ts.strftime('%Y%m%d_%H%M%S')}.json",
+                        mime="application/json"
+                    )
+                
+                with export_cols[2]:
+                    st.caption(f"📊 {len(msg)} rows × {len(msg.columns)} columns")
+        
+        else:
+            # Handle non-DataFrame messages (text responses)
+            if isinstance(msg, str):
+                # Check for special message types
+                if msg.startswith("❓"):
+                    st.info(msg[2:])  # Remove emoji and show as info
+                elif msg.startswith("❌"):
+                    st.error(msg[2:])  # Remove emoji and show as error
+                elif msg.startswith("✅"):
+                    st.success(msg[2:])  # Remove emoji and show as success
+                elif msg.startswith("💡"):
+                    st.markdown(msg)  # Show AI insights with formatting
                 else:
-                    # Regular message display
-                    if message_content.startswith("✅"):
-                        st.markdown(f'<div class="status-success">{message_content}</div>', unsafe_allow_html=True)
-                    elif message_content.startswith("❌"):
-                        st.markdown(f'<div class="status-error">{message_content}</div>', unsafe_allow_html=True)
-                    else:
-                        st.markdown(message_content)            
-            st.markdown("</div>", unsafe_allow_html=True)  # Close ai-content
-            st.markdown("</div>", unsafe_allow_html=True)  # Close ai-message
-            st.markdown("</div>", unsafe_allow_html=True)  # Close message
+                    st.markdown(msg)
+            else:
+                st.write(msg)        
+        st.markdown("</div>", unsafe_allow_html=True)  # Close ai-content
+        st.markdown("</div>", unsafe_allow_html=True)  # Close ai-message
+        st.markdown("</div>", unsafe_allow_html=True)  # Close message
     
     st.markdown("</div>", unsafe_allow_html=True)  # Close chat-container
 

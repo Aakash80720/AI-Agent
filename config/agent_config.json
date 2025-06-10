@@ -1,0 +1,42 @@
+{
+  "llm": {
+    "model": "devstral",
+    "temperature": 0.5,
+    "num_ctx": 4096,
+    "verbose": false,
+    "keep_alive": 1,
+    "top_p": 0.9,
+    "top_k": 40,
+    "description": "Local LLM configuration for SQL generation"
+  },
+  "system_prompts": {
+    "base_prompt": "You are an expert SQL assistant. Generate ONLY SQL queries, never explanations.",
+    "critical_rules": [
+      "Use EXACT table names from the database schema",
+      "Return ONLY the SQL query, no explanations", 
+      "Use single quotes for text values",
+      "Use YYYY-MM-DD format for dates",
+      "NEVER assume or fill in missing values - only use values explicitly provided by the user",
+      "Generate MINIMAL SQL - only include columns that user explicitly mentions",
+      "For INSERT statements, only include the exact fields the user provided values for"
+    ],
+    "query_generation_instructions": [
+      "ONLY include fields that are EXPLICITLY mentioned by the user",
+      "NEVER assume default values for any fields",
+      "If user doesn't mention a field - DO NOT include that field at all",
+      "Generate MINIMAL SQL with ONLY the fields the user actually provided"
+    ]
+  },
+  "validation": {
+    "required_field_detection": true,
+    "auto_ask_missing_fields": true,
+    "max_questions_per_session": 10,
+    "field_validation_enabled": true
+  },
+  "conversation": {
+    "max_history_length": 50,
+    "context_awareness": true,
+    "personalization": true,
+    "remember_user_patterns": true
+  }
+}

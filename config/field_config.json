@@ -1,0 +1,149 @@
+{
+  "models": {
+    "employee": {
+      "table_name": "employee",
+      "description": "Employee management table",
+      "fields": {
+        "id": {
+          "type": "integer",
+          "required": false,
+          "description": "Auto-generated employee ID",
+          "validation": {
+            "auto_increment": true
+          }
+        },
+        "name": {
+          "type": "string",
+          "required": true,
+          "description": "Employee full name",
+          "validation": {
+            "min_length": 1,
+            "max_length": 100
+          },
+          "user_prompt": "Employee full name (e.g., John Smith, Jane Doe)"
+        },
+        "department": {
+          "type": "string", 
+          "required": true,
+          "description": "Department name (required)",
+          "validation": {
+            "min_length": 1,
+            "max_length": 50
+          },
+          "user_prompt": "Department name (e.g., Engineering, Sales, HR, Marketing, Finance)",
+          "suggestions": ["Engineering", "Sales", "HR", "Marketing", "Finance", "Operations", "IT"]
+        },
+        "salary": {
+          "type": "float",
+          "required": true,
+          "description": "Employee salary (required)",
+          "validation": {
+            "min_value": 0
+          },
+          "user_prompt": "Annual salary amount (numbers only, e.g., 50000, 75000)",
+          "format": "currency"
+        },
+        "hire_date": {
+          "type": "date",
+          "required": false,
+          "description": "Hire date in YYYY-MM-DD format",
+          "validation": {
+            "format": "YYYY-MM-DD"
+          },
+          "user_prompt": "Hire date (YYYY-MM-DD format, e.g., 2024-01-15)",
+          "default": "current_date"
+        }
+      }
+    },
+    "project": {
+      "table_name": "project",
+      "description": "Project management table",
+      "fields": {
+        "id": {
+          "type": "integer",
+          "required": false,
+          "description": "Auto-generated project ID",
+          "validation": {
+            "auto_increment": true
+          }
+        },
+        "name": {
+          "type": "string",
+          "required": true,
+          "description": "Project name",
+          "validation": {
+            "min_length": 1,
+            "max_length": 100
+          },
+          "user_prompt": "Project name (e.g., Website Redesign, Mobile App Development)"
+        },
+        "description": {
+          "type": "string",
+          "required": false,
+          "description": "Project description",
+          "validation": {
+            "max_length": 500
+          },
+          "user_prompt": "Project description (optional, brief overview of the project)"
+        },
+        "start_date": {
+          "type": "date",
+          "required": false,
+          "description": "Start date in YYYY-MM-DD format",
+          "validation": {
+            "format": "YYYY-MM-DD"
+          },
+          "user_prompt": "Project start date (YYYY-MM-DD format, e.g., 2024-02-01)"
+        },
+        "end_date": {
+          "type": "date",
+          "required": false,
+          "description": "End date in YYYY-MM-DD format",
+          "validation": {
+            "format": "YYYY-MM-DD"
+          },
+          "user_prompt": "Project end date (YYYY-MM-DD format, e.g., 2024-12-31)"
+        },
+        "budget": {
+          "type": "float",
+          "required": false,
+          "description": "Project budget",
+          "validation": {
+            "min_value": 0
+          },
+          "user_prompt": "Project budget (numbers only, e.g., 100000, 250000)",
+          "format": "currency"
+        },
+        "department": {
+          "type": "string",
+          "required": false,
+          "description": "Department name",
+          "validation": {
+            "max_length": 50
+          },
+          "user_prompt": "Responsible department (e.g., Engineering, Marketing)",
+          "suggestions": ["Engineering", "Sales", "HR", "Marketing", "Finance", "Operations", "IT"]
+        }
+      }
+    }
+  },
+  "field_types": {
+    "string": {
+      "python_type": "str",
+      "sql_type": "TEXT"
+    },
+    "integer": {
+      "python_type": "int", 
+      "sql_type": "INTEGER"
+    },
+    "float": {
+      "python_type": "float",
+      "sql_type": "REAL"
+    },
+    "date": {
+      "python_type": "str",
+      "sql_type": "TEXT",
+      "validation_pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    }
+  }
+}

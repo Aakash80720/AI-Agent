@@ -1,0 +1,33 @@
+{
+  "databases": {
+    "default": {
+      "type": "sqlite",
+      "path": "test.db",
+      "description": "Default test database"
+    },
+    "production": {
+      "type": "sqlite", 
+      "path": "production.db",
+      "description": "Production database"
+    },
+    "mysql_example": {
+      "type": "mysql",
+      "host": "localhost",
+      "port": 3306,
+      "database": "company_db",
+      "username": "user",
+      "password": "password",
+      "description": "MySQL production database"
+    },
+    "postgresql_example": {
+      "type": "postgresql",
+      "host": "localhost",
+      "port": 5432,
+      "database": "company_db", 
+      "username": "user",
+      "password": "password",
+      "description": "PostgreSQL production database"
+    }
+  },
+  "active_database": "default"
+}
