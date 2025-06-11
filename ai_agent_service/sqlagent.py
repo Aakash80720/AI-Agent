@@ -94,6 +94,9 @@ class SQLAgent:
                 f"System : {self.Sytem_Prompt}"
                 "You have access to a SQLite database. This is the database's table structure:"
                 "{table_info}"
+                "These are the available database tables:"
+                "{table_names}"
+                "Create a SQL query based on the provided database structure and the user's question. With available tables:"
                 "Your task is to write ONLY the SQL query to answer the following question."
                 "Do NOT include any explanations, comments, or code block formatting (no ``` or ```sql)."
                 "Return only the SQL statement as plain text."
@@ -310,32 +313,4 @@ if __name__ == "__main__":
     chat = Chat()
     response = chat.run("Insert a new employee with name 'John Doe' in salary 70000.")
     print(response)
-
-# conversation_memory = {}    
-# agent = SQLAgent()
-# query = agent.generate_query("Insert a new employee with name 'John mem', and salary 70000.")
-# print(query)
-# llm = agent.get_llm()
-# data = agent.parse_insert_or_update_query(query)
-# if data:
-#     table, query_type ,values = data
-#     model = agent.model_map.get(table.lower())
-#     if model and query_type is 'insert':
-#         missing , instance= agent.validate_fields(values, model)
-#         if missing:
-#             print(f"Missing fields: {missing}")
-#         else:
-#             # Here you can save the instance to the database
-#             # For example, using SQLAlchemy or any other ORM
-#             # session.add(instance)
-#             # session.commit()
-#             # session.refresh(instance)
-#             # print(f"Created instance of {model.__name__}: {instance}")
-#             pass
-#         print(f"Created instance of {model.__name__}: {instance}")
-#     else:
-#         print(f"No model found for table: {table}")
-#     print(f"Table: {table}, Values: {values}")
-# # result = agent.execute_query(query)
-# # print(result)
 
