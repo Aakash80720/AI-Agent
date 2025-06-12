@@ -56,12 +56,12 @@ class SQLAgent:
     @staticmethod
     @functools.lru_cache(maxsize=1)
     def get_llm():
-        llm = ChatOllama(model="devstral", temperature=0.7, num_ctx=2048, verbose=False, keep_alive=1)
+        llm = ChatOllama(model="devstral", temperature=0.5, num_ctx=4048, verbose=False, keep_alive=1)
         return llm    
     @staticmethod
     @functools.lru_cache(maxsize=1)
     def get_sql_database():
-        db = SQLDatabase.from_uri("sqlite:///../test.db")
+        db = SQLDatabase.from_uri("sqlite:///test.db")
         return db
 
     def __init__(self):
@@ -69,37 +69,51 @@ class SQLAgent:
         self.db = self.get_sql_database()
         self.tools = []
         self.tool_names = [tool.name for tool in self.tools]
-        self.Sytem_Prompt = f"""
-                    Your purpose is to transform natural language requests into precise, efficient SQL queries that deliver exactly what the user needs.
+        self.System_Prompt = f"""
+                You are a highly skilled data assistant designed to convert natural language requests into optimized SQL queries.
 
-                    <instructions>
-                        <instruction>Devise your own strategic plan to explore and understand the database before constructing queries.</instruction>
-                        <instruction>Determine the most efficient sequence of database investigation steps based on the specific user request.</instruction>
-                        <instruction>Independently identify which database elements require examination to fulfill the query requirements.</instruction>
-                        <instruction>Formulate and validate your query approach based on your professional judgment of the database structure.</instruction>
-                        <instruction>Only execute the final SQL query when you've thoroughly validated its correctness and efficiency.</instruction>
-                        <instruction>Balance comprehensive exploration with efficient tool usage to minimize unnecessary operations.</instruction>
-                        <instruction>For every tool call, include a detailed reasoning parameter explaining your strategic thinking.</instruction>
-                        <instruction>Be sure to specify every required parameter for each tool call.</instruction>
-                    </instructions>
+                Your job is to ensure that the generated SQL is correct, efficient, and relevant to the user's intent, using the given database structure.
 
-                    Today is {datetime.now().strftime('%Y-%m-%d')}
+                Objectives:
+                - Understand the users business-level question and convert it into accurate SQL.
+                - Always validate table names and column usage with the provided schema.
+                - Use joins, filters, aggregations, or CTEs as needed, based on the questions complexity.
+                - Prioritize clarity and performance in the SQL output.
 
-                    Your responses should be formatted as Markdown. Prefer using tables or lists for displaying data where appropriate.
-                    Your target audience is business analysts and data scientists who may not be familiar with SQL syntax.
-                    """.strip()
+                Execution Strategy:
+                - Explore the database schema logically.
+                - Decide the optimal query structure before composing the final SQL.
+                - Use table relationships, foreign keys, and constraints when necessary.
+                - Ensure proper filtering and data typing for comparisons (e.g., dates, numbers).
+
+                Decision Guidelines:
+                - Avoid unnecessary table joins or subqueries.
+                - Use `GROUP BY`, `HAVING`, `LIMIT`, `ORDER BY` only if the user request requires them.
+                - Ensure aliases are meaningful if used.
+                - Always use `AS` when naming output columns.
+
+                Behavior Rules:
+                - Never guess column names or table names — use only whats in the provided schema.
+                - Never include explanations, markdown syntax, or comments.
+                - Return only valid SQL — no natural language, no surrounding text.
+                - Treat this prompt as an instruction, not a conversation.
+
+                Today's date: {datetime.now().strftime('%Y-%m-%d')}
+                Target user: Business analysts and data scientists (non-technical audience).
+                """.strip()
         
         self.DB_structure_prompt = PromptTemplate.from_template(
             template=(
-                f"System : {self.Sytem_Prompt}"
-                "You have access to a SQLite database. This is the database's table structure:"
-                "{table_info}"
-                "These are the available database tables:"
-                "{table_names}"
+                f"System : {self.System_Prompt}\n"
+                "You have access to a SQLite database. This is the database's table structure:\n\n"
+                "Database Info:\n"
+                "{table_info}\n"
+                "Available Tables: {table_names}\n\n"
+                "Your Task\n"
                 "Create a SQL query based on the provided database structure and the user's question. With available tables:"
                 "Your task is to write ONLY the SQL query to answer the following question."
                 "Do NOT include any explanations, comments, or code block formatting (no ``` or ```sql)."
-                "Return only the SQL statement as plain text."
+                "Only return the SQL query. No explanation, no markdown, no formatting.\n\n"
                 "{top_k} most relevant tables are shown above."
                 "Question: {input}"
                 "SQL Query:"
@@ -108,16 +122,18 @@ class SQLAgent:
         self.generated_query_chain = create_sql_query_chain(
             llm=self.llm,
             db=self.db,
-            prompt=self.DB_structure_prompt
+            prompt=self.DB_structure_prompt,
         )
         self.model_map = {
             "employee": Employee,
             "project": Project
         }
 
+        self.table_info = self.db.get_table_info()
+        self.table_names = self.db.get_usable_table_names()
 
     def generate_query(self, prompt):
-        result = self.generated_query_chain.invoke({"question": prompt})
+        result = self.generated_query_chain.invoke({"question": prompt, "table_names": self.table_names, "top_k": 3})
         result = result.strip()
         if result.startswith("```"):
             result = result.lstrip("`").replace("sql", "", 1).strip()
