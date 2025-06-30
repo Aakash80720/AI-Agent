@@ -487,6 +487,10 @@ if "chat_agent" not in st.session_state:
     st.session_state.chat_agent = Chat()
 if "loading" not in st.session_state:
     st.session_state.loading = False
+if "waiting_for_field" not in st.session_state:
+    st.session_state.waiting_for_field = None
+if "last_query_state" not in st.session_state:
+    st.session_state.last_query_state = None
 
 # Sidebar
 with st.sidebar:
@@ -593,42 +597,92 @@ if send_button and user_input.strip():
                     <div class='loading-dot'></div>
                     <div class='loading-dot'></div>
                 </div>
-            </div>
-        """, unsafe_allow_html=True)
-    
-    # Get AI response
+            </div>        """, unsafe_allow_html=True)
+      # Get AI response
     try:
         agent = st.session_state.chat_agent
+        
+        # Check if we're waiting for a specific field value
+        if st.session_state.waiting_for_field:
+            # Add a note about providing a field value
+            field = st.session_state.waiting_for_field
+            st.session_state.chat_history.append((f"💬 Providing value for **{field}**: {user_input}", datetime.datetime.now()))
+            
+            # Clear the waiting state
+            st.session_state.waiting_for_field = None
+            st.session_state.last_query_state = None
+            
+        # Get the agent's response
         response = agent.run("user", user_input)
         
         # Process response
-        if isinstance(response, dict) and "execution_result" in response:
-            exec_result = response["execution_result"]
-            
-            # Try to parse as JSON for table data
-            try:
-                if isinstance(exec_result, str) and exec_result.strip().startswith("["):
-                    data = json.loads(exec_result)
-                    if isinstance(data, list) and len(data) > 0:
-                        df = pd.DataFrame(data)
-                        st.session_state.chat_history.append((df, datetime.datetime.now()))
+        if isinstance(response, dict):
+            # Check for formatted_response from our enhanced SQLAgent
+            st.session_state.chat_history.append((response.get('query','Query unable to find'), datetime.datetime.now()))
+            if "formatted_response" in response:
+                st.session_state.chat_history.append((response["formatted_response"], datetime.datetime.now()))
+                  # Check for query field (asking for missing values)
+            elif "query" in response and response["query"]:
+                field_name = response.get("field", "value")
+                missing_query = response["query"]
+                
+                # Create a more user-friendly message
+                formatted_msg = f"🔍 **Additional Information Needed:**\n\n{missing_query}"
+                
+                # Add to chat history
+                st.session_state.chat_history.append((formatted_msg, datetime.datetime.now()))
+                
+                # Store the field we're waiting for to handle the next user response
+                st.session_state.waiting_for_field = field_name
+                st.session_state.last_query_state = response
+                
+            # Check for execution_result (SQL query results)
+            elif "execution_result" in response:
+                exec_result = response["execution_result"]
+                query = response.get("Query", response.get("final_query", ""))
+                intent = response.get("intent", "")
+                
+                # Try to parse as JSON for table data
+                try:
+                    # Check if it's a JSON string containing data
+                    if isinstance(exec_result, str) and (
+                        exec_result.strip().startswith("[") or 
+                        exec_result.strip().startswith("{")
+                    ):
+                        data = json.loads(exec_result)
+                        
+                        # If it's a list of records, create a DataFrame
+                        if isinstance(data, list) and len(data) > 0:
+                            df = pd.DataFrame(data)
+                            
+                            # Create a formatted message with query info and DataFrame
+                            formatted_msg = {
+                                "type": "dataframe", 
+                                "data": df,
+                                "query": query,
+                                "intent": intent
+                            }
+                            st.session_state.chat_history.append((formatted_msg, datetime.datetime.now()))
+                        else:
+                            st.session_state.chat_history.append(("📭 No results found for your query.", datetime.datetime.now()))
                     else:
-                        st.session_state.chat_history.append(("📭 No results found for your query.", datetime.datetime.now()))
-                else:
-                    # Handle non-JSON results
-                    if any(keyword in str(exec_result).upper() for keyword in ["INSERT", "UPDATE", "DELETE", "CREATE"]):
-                        st.session_state.chat_history.append((f"✅ Operation completed successfully: {exec_result}", datetime.datetime.now()))
-                    else:
-                        st.session_state.chat_history.append((f"📊 Result: {exec_result}", datetime.datetime.now()))
-            except json.JSONDecodeError:
-                st.session_state.chat_history.append((f"📊 Result: {exec_result}", datetime.datetime.now()))
+                        # Handle non-JSON results
+                        if any(keyword in str(exec_result).upper() for keyword in ["INSERT", "UPDATE", "DELETE", "CREATE"]):
+                            st.session_state.chat_history.append((f"✅ Operation completed successfully: {exec_result}", datetime.datetime.now()))
+                        else:
+                            st.session_state.chat_history.append((f"📊 Result: {exec_result}", datetime.datetime.now()))
+                except json.JSONDecodeError:
+                    st.session_state.chat_history.append((f"📊 Result: {exec_result}", datetime.datetime.now()))
+            else:
+                # Handle other dictionary responses
+                response_text = str(response)
+                st.session_state.chat_history.append((response_text, datetime.datetime.now()))
         else:
-            # Handle other response types
+            # Handle string or other response types
             response_text = str(response)
             st.session_state.chat_history.append((response_text, datetime.datetime.now()))
-            
-    except Exception as e:
-        st.session_state.chat_history.append((f"❌ Error: {str(e)}", datetime.datetime.now()))
+    except Exception as error:
+        st.session_state.chat_history.append((f"❌ Error: {str(error)}", datetime.datetime.now()))
     
     # Clear loading state
     st.session_state.loading = False
@@ -646,135 +700,133 @@ else:
     ai_responses = []
 
 if ai_responses:
-    # Display chat container with actual AI responses
-    st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
+    # Display chat container with actual AI responses    st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
     
     # Display actual AI responses
     for msg, ts in ai_responses:
-            st.markdown("<div class='message'>", unsafe_allow_html=True)
-            st.markdown("<div class='ai-message'>", unsafe_allow_html=True)
-            st.markdown("<div class='ai-avatar'>AI</div>", unsafe_allow_html=True)
-            st.markdown("<div class='ai-content'>", unsafe_allow_html=True)
+        st.markdown("<div class='message'>", unsafe_allow_html=True)
+        st.markdown("<div class='ai-message'>", unsafe_allow_html=True)
+        st.markdown("<div class='ai-avatar'>AI</div>", unsafe_allow_html=True)
+        st.markdown("<div class='ai-content'>", unsafe_allow_html=True)
+        
+        # Message header
+        st.markdown(f"""
+            <div style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
+                <strong>AI Assistant</strong>
+                <span style="color: var(--text-secondary); font-size: 0.875rem;">{ts.strftime('%H:%M:%S')}</span>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Handle different message types
+        if isinstance(msg, pd.DataFrame):
+            # Legacy support for direct DataFrame objects
+            display_df = msg.copy()
+            st.markdown(f"**📊 Query Results** ({len(display_df)} rows × {len(display_df.columns)} columns)")
+            st.markdown("*✏️ Click on any cell to edit the data*")
             
-            # Message header
-            st.markdown(f"""
-                <div style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
-                    <strong>AI Assistant</strong>
-                    <span style="color: var(--text-secondary); font-size: 0.875rem;">{ts.strftime('%H:%M:%S')}</span>
-                </div>            """, unsafe_allow_html=True)
+            # Configure and display DataFrame (rest of existing DataFrame handling)
             
-            if isinstance(msg, pd.DataFrame):
-                # ...existing DataFrame handling code...
-                # Display DataFrame with editable data_editor
-                st.markdown(f"**📊 Query Results** ({len(msg)} rows × {len(msg.columns)} columns)")
-                st.markdown("*✏️ Click on any cell to edit the data*")
-                
-                # Create a copy of the dataframe for editing
-                display_df = msg.copy()
-                
-                # Convert string date columns to datetime for proper DateColumn support
-                date_columns = []
-                for col in display_df.columns:
-                    if 'date' in col.lower() and display_df[col].dtype == 'object':
-                        try:
-                            # Try to convert string dates to datetime
-                            display_df[col] = pd.to_datetime(display_df[col], errors='coerce')
-                            date_columns.append(col)
-                            st.info(f"🗓️ Converted '{col}' from string to date format for editing")
-                        except:
-                            # If conversion fails, keep as text
-                            pass
-                
-                # Configure columns for better display
-                column_config = {}
-                for col in display_df.columns:
-                    if display_df[col].dtype in ['int64', 'float64']:
-                        if any(keyword in col.lower() for keyword in ['salary', 'budget', 'cost', 'price', 'amount']):
-                            column_config[col] = st.column_config.NumberColumn(
-                                format="$%.0f",
-                                help=f"Currency: {col}",
-                                min_value=0,
-                                max_value=1000000
-                            )
-                        else:
-                            column_config[col] = st.column_config.NumberColumn(
-                                format="%.0f",
-                                help=f"Numeric: {col}"
-                            )
-                    elif col in date_columns or 'datetime' in str(display_df[col].dtype):
-                        column_config[col] = st.column_config.DateColumn(
-                            help=f"Date: {col}",
-                            format="YYYY-MM-DD"
+        elif isinstance(msg, dict) and msg.get("type") == "dataframe" and "data" in msg:
+            # Handle new structured DataFrame messages with query context
+            df = msg["data"]
+            query = msg.get("query", "")
+            intent = msg.get("intent", "")
+            
+            # Show query information first
+            if query:
+                st.markdown(f"**🔍 SQL Query:**")
+                st.code(query, language="sql")
+            
+            st.markdown(f"**📊 Query Results** ({len(df)} rows × {len(df.columns)} columns)")
+            st.markdown("*✏️ Click on any cell to edit the data*")
+            
+            # Create a copy of the dataframe for editing
+            display_df = df.copy()
+            
+            # Convert string date columns to datetime for proper DateColumn support
+            date_columns = []
+            for col in display_df.columns:
+                if 'date' in col.lower() and display_df[col].dtype == 'object':
+                    try:
+                        # Try to convert string dates to datetime
+                        display_df[col] = pd.to_datetime(display_df[col], errors='coerce')
+                        date_columns.append(col)
+                    except:
+                        # If conversion fails, keep as text
+                        pass
+            
+            # Configure columns for better display
+            column_config = {}
+            for col in display_df.columns:
+                if display_df[col].dtype in ['int64', 'float64']:
+                    if any(keyword in col.lower() for keyword in ['salary', 'budget', 'cost', 'price', 'amount']):
+                        column_config[col] = st.column_config.NumberColumn(
+                            format="$%.0f",
+                            help=f"Currency: {col}",
+                            min_value=0,
+                            max_value=1000000
                         )
                     else:
-                        column_config[col] = st.column_config.TextColumn(
-                            help=f"Text: {col}",
-                            max_chars=100
+                        column_config[col] = st.column_config.NumberColumn(
+                            format="%.0f",
+                            help=f"Numeric: {col}"
                         )
-                
-                # Display the editable dataframe
-                edited_df = st.data_editor(
-                    display_df,  # Use the converted dataframe
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config=column_config,
-                    num_rows="dynamic",  # Allow adding/deleting rows
-                    key=f"data_editor_{ts.timestamp()}"  # Unique key for each table
-                )
-                
-                # Show edit summary if data was changed
-                if not edited_df.equals(display_df):
-                    st.markdown("**🔄 Data Changes Detected:**")
-                    changes = []
-                    
-                    # Check for row count changes
-                    if len(edited_df) != len(display_df):
-                        changes.append(f"Rows: {len(display_df)} → {len(edited_df)}")
-                    
-                    # Check for value changes (simplified)
-                    if len(edited_df) == len(display_df):
-                        for col in display_df.columns:
-                            if col in edited_df.columns and not edited_df[col].equals(display_df[col]):
-                                changes.append(f"Modified column: {col}")
-                    
-                    if changes:
-                        st.info("📝 " + " | ".join(changes))
-                        
-                        # Option to save changes (you can implement database update logic here)
-                        if st.button("💾 Save Changes", key=f"save_{ts.timestamp()}"):
-                            st.success("✅ Changes saved successfully!")
-                            # Here you would implement the logic to update the database
-                            # For now, we'll just show a success message
-                
-                # Add summary statistics
-                numeric_cols = [col for col in msg.columns if msg[col].dtype in ['int64', 'float64']]
-                text_cols = [col for col in msg.columns if msg[col].dtype == 'object']
-                
-                st.markdown(f"""
-                    <div class='summary-stats'>
-                        <div class='stat-item'>
-                            <div class='stat-value'>{len(msg)}</div>
-                            <div class='stat-label'>Total Rows</div>
-                        </div>
-                        <div class='stat-item'>
-                            <div class='stat-value'>{len(msg.columns)}</div>
-                            <div class='stat-label'>Columns</div>
-                        </div>
-                        <div class='stat-item'>
-                            <div class='stat-value'>{len(numeric_cols)}</div>
-                            <div class='stat-label'>Numeric</div>
-                        </div>
-                        <div class='stat-item'>
-                            <div class='stat-value'>{len(text_cols)}</div>
-                            <div class='stat-label'>Text</div>
-                        </div>
+                elif col in date_columns or 'datetime' in str(display_df[col].dtype):
+                    column_config[col] = st.column_config.DateColumn(
+                        help=f"Date: {col}",
+                        format="YYYY-MM-DD"
+                    )
+                else:
+                    column_config[col] = st.column_config.TextColumn(
+                        help=f"Text: {col}",
+                        max_chars=100
+                    )
+            
+            # Display the editable dataframe
+            edited_df = st.data_editor(
+                display_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config=column_config,
+                num_rows="dynamic",
+                key=f"data_editor_{ts.timestamp()}"
+            )
+            
+            # Show summary statistics
+            numeric_cols = [col for col in df.columns if df[col].dtype in ['int64', 'float64']]
+            text_cols = [col for col in df.columns if df[col].dtype == 'object']
+            
+            st.markdown(f"""
+                <div class='summary-stats'>
+                    <div class='stat-item'>
+                        <div class='stat-value'>{len(df)}</div>
+                        <div class='stat-label'>Total Rows</div>
                     </div>
-                """, unsafe_allow_html=True)
-                
+                    <div class='stat-item'>
+                        <div class='stat-value'>{len(df.columns)}</div>
+                        <div class='stat-label'>Columns</div>
+                    </div>
+                    <div class='stat-item'>
+                        <div class='stat-value'>{len(numeric_cols)}</div>
+                        <div class='stat-label'>Numeric</div>
+                    </div>
+                    <div class='stat-item'>
+                        <div class='stat-value'>{len(text_cols)}</div>
+                        <div class='stat-label'>Text</div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+            
+        else:
+            # Display text message with proper formatting
+            message_content = str(msg)
+            
+            # Check if the message contains formatted SQL content
+            if "🔍 SQL Query:" in message_content and "```" in message_content:
+                st.markdown(message_content, unsafe_allow_html=True)
+            elif "📊 Query Results" in message_content:
+                st.markdown(message_content, unsafe_allow_html=True)
             else:
-                # Display text message with proper formatting
-                message_content = str(msg)
-                
                 # Handle SQL code blocks
                 if "```sql" in message_content:
                     parts = message_content.split("```sql")
@@ -782,28 +834,19 @@ if ai_responses:
                         before_code = parts[0]
                         code_and_after = parts[1].split("```")
                         sql_code = code_and_after[0].strip()
-                        after_code = "```".join(code_and_after[1:]) if len(code_and_after) > 1 else ""
+                        after_code = "".join(code_and_after[1:])
                         
                         if before_code.strip():
                             st.markdown(before_code)
-                        
-                        st.markdown(f'<div class="code-block">{sql_code}</div>', unsafe_allow_html=True)
-                        
+                        st.code(sql_code, language="sql")
                         if after_code.strip():
                             st.markdown(after_code)
                     else:
                         st.markdown(message_content)
                 else:
-                    # Regular message display
-                    if message_content.startswith("✅"):
-                        st.markdown(f'<div class="status-success">{message_content}</div>', unsafe_allow_html=True)
-                    elif message_content.startswith("❌"):
-                        st.markdown(f'<div class="status-error">{message_content}</div>', unsafe_allow_html=True)
-                    else:
-                        st.markdown(message_content)            
-            st.markdown("</div>", unsafe_allow_html=True)  # Close ai-content
-            st.markdown("</div>", unsafe_allow_html=True)  # Close ai-message
-            st.markdown("</div>", unsafe_allow_html=True)  # Close message
+                    st.markdown(message_content)
+        
+        st.markdown("</div></div></div>", unsafe_allow_html=True)
     
     st.markdown("</div>", unsafe_allow_html=True)  # Close chat-container
 
