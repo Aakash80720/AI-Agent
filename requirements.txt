@@ -2,3 +2,8 @@ langchain
 langchain_community
 huggingface_hub
 python-dotenv
+ollama
+re
+sqlite3
+chromadb
+langchain-ollama
